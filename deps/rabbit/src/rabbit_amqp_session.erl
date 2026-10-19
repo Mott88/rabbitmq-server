@@ -2544,7 +2544,7 @@ incoming_link_transfer(
     validate_message_size(PayloadSize, MaxMessageSize),
     rabbit_msg_size_metrics:observe(?PROTOCOL, PayloadSize),
     messages_received(Settled),
-    Mc0 = try mc:init(mc_amqp, PayloadBin, #{})
+    Mc0 = try parse_amqp_message(PayloadBin)
           catch throw:Reason0 ->
                     link_error(?V_1_0_AMQP_ERROR_DECODE_ERROR,
                                "failed to parse message: ~tp", [Reason0])
@@ -4212,3 +4212,19 @@ unwrap_simple_type({_SimpleType, V}) ->
     V;
 unwrap_simple_type(V) ->
     V.
+
+%% Legacy AMQP 1.0 clients may omit the mandatory body section.
+%% Append amqp-value:null (0x00 0x53 0x77 0x40) and parse again.
+%% If the retry also fails, its throw is handled by the caller's catch,
+%% so the client still gets a normal amqp:decode-error link error.
+parse_amqp_message(PayloadBin) ->
+    try mc:init(mc_amqp, PayloadBin, #{})
+    catch throw:missing_amqp_message_body ->
+              Mc = mc:init(mc_amqp,
+                           iolist_to_binary([PayloadBin, <<16#00, 16#53, 16#77, 16#40>>]),
+                           #{}),
+              logger:warning("Received AMQP 1.0 message without body, "
+                             "appended amqp-value: null section (message_id: ~tp)",
+                             [mc:message_id(Mc)]),
+              Mc
+    end.
