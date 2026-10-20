@@ -4228,3 +4228,17 @@ parse_amqp_message(PayloadBin) ->
                              [format_message_id(mc:message_id(Mc))]),
               Mc
     end.
+
+%% Render an AMQP 1.0 message-id without its type tag.
+format_message_id(undefined) ->
+    "none";
+format_message_id({utf8, Bin}) ->
+    Bin;
+format_message_id({ulong, N}) ->
+    integer_to_list(N);
+format_message_id({uuid, <<A:32, B:16, C:16, D:16, E:48>>}) ->
+    io_lib:format("~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b", [A, B, C, D, E]);
+format_message_id({binary, Bin}) ->
+    binary:encode_hex(Bin, lowercase);
+format_message_id(Other) ->
+    io_lib:format("~tp", [Other]).
