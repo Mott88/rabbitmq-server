@@ -4224,7 +4224,7 @@ parse_amqp_message(PayloadBin) ->
                            iolist_to_binary([PayloadBin, <<16#00, 16#53, 16#77, 16#40>>]),
                            #{}),
               logger:warning("Received AMQP 1.0 message without body, "
-                             "appended amqp-value: null section (message_id: ~tp)",
-                             [mc:message_id(Mc)]),
+                             "appended amqp-value: null (message_id: ~ts)",
+                             [format_message_id(mc:message_id(Mc)])),
               Mc
     end.
