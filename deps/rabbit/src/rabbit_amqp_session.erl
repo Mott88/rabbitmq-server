@@ -4225,6 +4225,6 @@ parse_amqp_message(PayloadBin) ->
                            #{}),
               logger:warning("Received AMQP 1.0 message without body, "
                              "appended amqp-value: null (message_id: ~ts)",
-                             [format_message_id(mc:message_id(Mc)])),
+                             [format_message_id(mc:message_id(Mc))]),
               Mc
     end.
