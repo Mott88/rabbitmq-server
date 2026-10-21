@@ -4214,17 +4214,17 @@ unwrap_simple_type(V) ->
     V.
 
 %% Legacy AMQP 1.0 clients may omit the mandatory body section.
-%% Append amqp-value:null (0x00 0x53 0x77 0x40) and parse again.
+%% Append an empty data section (0x00 0x53 0x75 0xa0 0x00) and parse again.
 %% If the retry also fails, its throw is handled by the caller's catch,
 %% so the client still gets a normal amqp:decode-error link error.
 parse_amqp_message(PayloadBin) ->
     try mc:init(mc_amqp, PayloadBin, #{})
     catch throw:missing_amqp_message_body ->
               Mc = mc:init(mc_amqp,
-                           iolist_to_binary([PayloadBin, <<16#00, 16#53, 16#77, 16#40>>]),
+			   iolist_to_binary([PayloadBin, <<16#00, 16#53, 16#75, 16#a0, 16#00>>]),
                            #{}),
               logger:warning("Received AMQP 1.0 message without body, "
-                             "appended amqp-value: null (message_id: ~ts)",
+                             "appended empty data section (message_id: ~ts)",
                              [format_message_id(mc:message_id(Mc))]),
               Mc
     end.
