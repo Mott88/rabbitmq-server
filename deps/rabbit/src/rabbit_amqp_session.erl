@@ -4220,15 +4220,76 @@ unwrap_simple_type(V) ->
 parse_amqp_message(PayloadBin) ->
     try mc:init(mc_amqp, PayloadBin, #{})
     catch throw:missing_amqp_message_body ->
-              Mc = mc:init(mc_amqp,
-			   iolist_to_binary([PayloadBin, <<16#00, 16#53, 16#75, 16#a0, 16#00>>]),
-                           #{}),
-              logger:warning("Received AMQP 1.0 message without body, "
-                             "appended empty data section (message_id: ~ts)",
-                             [format_message_id(mc:message_id(Mc))]),
-              Mc
+              %% No body and no footer.
+              add_empty_amqp_body(PayloadBin);
+          throw:{unexpected_message_section, footer, _Position} ->
+              %% No body, but a footer where the body should be.
+              add_empty_amqp_body(PayloadBin)
     end.
-
+ 
+%% The footer must be the last section, so it is removed before the
+%% empty data section is appended.
+add_empty_amqp_body(PayloadBin) ->
+    {Bare, FooterRemoved} = strip_amqp_footer(iolist_to_binary(PayloadBin)),
+    Mc = mc:init(mc_amqp,
+                 <<Bare/binary, 16#00, 16#53, 16#75, 16#a0, 16#00>>,
+                 #{}),
+    logger:warning("Received AMQP 1.0 message without body, "
+                   "appended empty data section "
+                   "(message_id: ~ts, footer removed: ~w)",
+                   [format_message_id(mc:message_id(Mc)), FooterRemoved]),
+    Mc.
+ 
+%% Remove the footer section (descriptor 0x78) from an encoded message,
+%% but only if it is the last section. Walks the sections from the start.
+%% Returns {Bin, false} unchanged if there is no trailing footer or a
+%% section can't be walked; the normal parser then reports any error
+%% as before.
+strip_amqp_footer(Bin) ->
+    strip_amqp_footer(Bin, 0).
+ 
+strip_amqp_footer(Bin, Pos) when Pos >= byte_size(Bin) ->
+    {Bin, false};
+strip_amqp_footer(Bin, Pos) ->
+    <<_:Pos/binary, Rest/binary>> = Bin,
+    case amqp_section_descriptor(Rest) of
+        error ->
+            {Bin, false};
+        {Code, DescLen} ->
+            <<_:DescLen/binary, Value/binary>> = Rest,
+            case amqp_value_length(Value) of
+                error ->
+                    {Bin, false};
+                {ok, Len} ->
+                    End = Pos + DescLen + Len,
+                    case Code of
+                        16#78 when End =:= byte_size(Bin) ->
+                            {binary:part(Bin, 0, Pos), true};
+                        16#78 ->
+                            %% Footer is not the last section: leave the
+                            %% message alone rather than drop sections.
+                            {Bin, false};
+                        _ ->
+                            strip_amqp_footer(Bin, End)
+                    end
+            end
+    end.
+ 
+%% Section descriptor: 0x00 followed by the code as smallulong or ulong.
+%% Returns {Code, DescriptorLength}.
+amqp_section_descriptor(<<16#00, 16#53, Code, _/binary>>) -> {Code, 3};
+amqp_section_descriptor(<<16#00, 16#80, Code:64, _/binary>>) -> {Code, 10};
+amqp_section_descriptor(_) -> error.
+ 
+%% Encoded length of a non-body section value (a list, a map or null).
+amqp_value_length(<<16#40, _/binary>>) -> {ok, 1};                      % null
+amqp_value_length(<<16#45, _/binary>>) -> {ok, 1};                      % list0
+amqp_value_length(<<C, Size, _/binary>>)
+  when C =:= 16#c0; C =:= 16#c1 -> {ok, 2 + Size};                     % list8, map8
+amqp_value_length(<<C, Size:32, _/binary>>)
+  when C =:= 16#d0; C =:= 16#d1 -> {ok, 5 + Size};                     % list32, map32
+amqp_value_length(_) -> error.
+ 
 %% Render an AMQP 1.0 message-id without its type tag.
 format_message_id(undefined) ->
     "none";
